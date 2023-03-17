@@ -16,6 +16,14 @@ enum ChampionType {
     OtherType
 };
 
+
+//#define GPU_PRINT(x) printf(x)
+
+#define GPU_PRINT(x) 
+
+
+
+
 struct Entity {
     int turnMeter = 0;
     int speed;
@@ -99,7 +107,6 @@ struct SimulationParams {
 };
 
 
-/*
 SimulationParams* GetSimulationParams() {
     SimulationParams* params = new SimulationParams;
     params->c1StartSpeed = 200;
@@ -117,13 +124,13 @@ SimulationParams* GetSimulationParams() {
     params->c3SkillDelayMin = 0;
     params->c3SkillDelaySteps = 6;
     //----------
-    params->c4StartSpeed = 200;
-    params->c4SpeedSteps = 100;
+    params->c4StartSpeed = 270;
+    params->c4SpeedSteps = 10;
     params->c4SkillDelayMin = 0;
     params->c4SkillDelaySteps = 0;
     //----------
     params->c5StartSpeed = 200;
-    params->c5SpeedSteps = 100;
+    params->c5SpeedSteps = 0;
     params->c5SkillDelayMin = 0;
     params->c5SkillDelaySteps = 0;
 
@@ -131,6 +138,8 @@ SimulationParams* GetSimulationParams() {
 }
 /**/
 /**/
+
+/*
 // working example
 // Fastest speed tuned team had speeds : 302, 286, 286, 270, 200
 // delays : d1 = 1 d2 = 0 d3 = 2
@@ -168,21 +177,20 @@ SimulationParams* GetSimulationParams() {
 #define N 10000
 #define MAX_TURN_METER 1428.57
 
-typedef struct {
-    int A, B, C;
-} Match;
 
-__device__ char dev_data[N];
+__device__ uint64_t dev_data[N];
 __device__ int dev_count = 0;
 __device__ int dev_founded = 0;
 
-__device__ int my_push_back(char mt) {
-    int insert_pt = atomicAdd(&dev_count, 1);
-    if (insert_pt < N) {
-        dev_data[insert_pt] = mt;
-        return insert_pt;
+__device__ int my_push_back(uint64_t mt) {
+    if (dev_count < N-10) {
+        int insert_pt = atomicAdd(&dev_count, 1);
+        if (insert_pt < N) {
+            dev_data[insert_pt] = mt;
+            return insert_pt;
+        }
+        else return -1;
     }
-    else return -1;
 }
 
 uint32_t CalculateSimulationParamsVariations(SimulationParams* params) {
@@ -217,7 +225,7 @@ __device__ void tickAllTurnmeters(Simulation* s) {
 __device__ bool makeClanBossTurn(Simulation* s) {
     s->cb.turnesMade++;
     s->cb.turnMeter = 0;
-    my_push_back('B');
+    GPU_PRINT("\tBOSS\n");
 
     if (s->cb.turnesMade > 3 && (s->cb.turnesMade % 3 == 1 || s->cb.turnesMade % 3 == 2)) {
         // starting checks on 4th turn. only when it is AOE 1-2
@@ -241,16 +249,16 @@ __device__ void makeChampionTurn(Simulation* s, ChampionStruct* c) {
     switch (c->type)
     {
     case ApothecaryType:
-        my_push_back('A');
+        GPU_PRINT(" A");
         break;
     case WarcasterType:
-        my_push_back('W');
+        GPU_PRINT(" W");
         break;
     case KymerType:
-        my_push_back('K');
+        GPU_PRINT(" K");
         break;
     default:
-        my_push_back('-');
+        GPU_PRINT("-");
     }
 
     if (c->skillDelay <= 0 && c->skillCurrentCooldown <= 0) {
@@ -258,7 +266,7 @@ __device__ void makeChampionTurn(Simulation* s, ChampionStruct* c) {
         switch (c->type)
         {
         case ApothecaryType:
-            my_push_back('S');
+            GPU_PRINT("S");
             // Fills the Turn Meter of all allies by 15 %.
             s->c1.turnMeter += MAX_TURN_METER * 15 / 100;
             s->c2.turnMeter += MAX_TURN_METER * 15 / 100;
@@ -273,7 +281,7 @@ __device__ void makeChampionTurn(Simulation* s, ChampionStruct* c) {
             s->c5.speed30Duration = 2;
             break;
         case WarcasterType:
-            my_push_back('S');
+            GPU_PRINT("S");
             //  Places block damage on all allies
             s->c1.unkillableDuration = 1;
             s->c2.unkillableDuration = 1;
@@ -282,7 +290,7 @@ __device__ void makeChampionTurn(Simulation* s, ChampionStruct* c) {
             s->c5.unkillableDuration = 1;
             break;
         case KymerType:
-            my_push_back('S');
+            GPU_PRINT("S");
             // Fills the Turn Meter of all allies by 20 %.
 
             if (&s->c1 != c) { s->c1.turnMeter += MAX_TURN_METER * 20 / 100; }
@@ -377,29 +385,66 @@ __device__ bool makeTurn(Simulation* s) {
 
 }
 
+__device__  uint64_t getGlobalIdx() {
+    int blockId = blockIdx.x + blockIdx.y * gridDim.x
+        + gridDim.x * gridDim.y * blockIdx.z;
+    int threadId = blockId * (blockDim.x * blockDim.y * blockDim.z)
+        + (threadIdx.z * (blockDim.x * blockDim.y))
+        + (threadIdx.y * blockDim.x) + threadIdx.x;
+    return threadId;
+}
+
+
+__device__ __host__ void FillSpeedsFromIndex(Simulation* s, SimulationParams* params, uint64_t i) {
+
+    // initialize speeds
+
+    s->c1.speed = params->c1StartSpeed + i % (params->c1SpeedSteps + 1);
+    i = i / (params->c1SpeedSteps + 1);
+    s->c1.skillDelay = params->c1SkillDelayMin + i % (params->c1SkillDelaySteps + 1);
+    i = i / (params->c1SkillDelaySteps + 1);
+
+    s->c2.speed = params->c2StartSpeed + i % (params->c2SpeedSteps + 1);
+    i = i / (params->c2SpeedSteps + 1);
+    s->c2.skillDelay = params->c2SkillDelayMin + i % (params->c2SkillDelaySteps + 1);
+    i = i / (params->c2SkillDelaySteps + 1);
+
+
+    s->c3.speed = params->c3StartSpeed + i % (params->c3SpeedSteps + 1);
+    i = i / (params->c3SpeedSteps + 1);
+    s->c3.skillDelay = params->c3SkillDelayMin + i % (params->c3SkillDelaySteps + 1);
+    i = i / (params->c3SkillDelaySteps + 1);
+
+    s->c4.speed = params->c4StartSpeed + i % (params->c4SpeedSteps + 1);
+    i = i / (params->c4SpeedSteps + 1);
+    s->c4.skillDelay = params->c4SkillDelayMin + i % (params->c4SkillDelaySteps + 1);
+    i = i / (params->c4SkillDelaySteps + 1);
+
+
+    s->c5.speed = params->c5StartSpeed + i % (params->c5SpeedSteps + 1);
+    i = i / (params->c5SpeedSteps + 1);
+    s->c5.skillDelay = params->c5SkillDelayMin + i % (params->c5SkillDelaySteps + 1);
+
+    s->cb.speed = params->cbSpeed;
+}
+
 __global__ void test(Simulation* simulation, SimulationParams* params) {
-    //int i = threadIdx.x;
-    //
 
     Simulation s;
 
     memcpy(&s, simulation, sizeof(Simulation));
 
-    // initialize speeds
-    s.c1.speed = 302;// params->c1StartSpeed;
-    s.c2.speed = 286; // params->c2StartSpeed;
-    s.c3.speed = 286; // params->c3StartSpeed;
-    s.c4.speed = 270; // params->c4StartSpeed;
-    s.c5.speed = 200; // params->c5StartSpeed;
-    s.cb.speed = 190;// params->cbSpeed;
+    FillSpeedsFromIndex(&s, params, getGlobalIdx());
 
-    // TODO initialize cooldowns
-    s.c1.skillDelay = 1; // params->c1SkillDelayMin;
-    s.c2.skillDelay = 0;// params->c2SkillDelayMin;
-    s.c3.skillDelay = 2;// params->c3SkillDelayMin;
-    s.c4.skillDelay = 0; // params->c4SkillDelayMin;
-    s.c5.skillDelay = 0;// params->c5SkillDelayMin;
-    // TODO get block/thread id and use steps during initialization
+    /*
+    printf("%d:%d\n%d:%d\n%d:%d\n%d:%d\n%d:%d\n", s.c1.speed, s.c1.skillDelay,
+        s.c2.speed, s.c2.skillDelay, 
+        s.c3.speed, s.c3.skillDelay, 
+        s.c4.speed, s.c4.skillDelay, 
+        s.c5.speed, s.c5.skillDelay);
+
+    printf("===%d====\n\n", i);
+    /**/
     bool running = true;
     
     while (running) {
@@ -414,24 +459,9 @@ __global__ void test(Simulation* simulation, SimulationParams* params) {
 
     if (s.cb.turnesMade >= 50) {
         // SUCCESS
+        my_push_back(getGlobalIdx());
        atomicAdd(&dev_founded, 1);
     }
-
-
-  //  if (i == 1) {
-   //     Match* m = new Match;
-    //    m->A = threadIdx.x;
-    //    my_push_back(m);
-    //}
-    /*
-   // result[0] = threadIdx.x;
-   // result[1] = blockIdx.x;
-    result[2] = threadIdx.z;
-    result[3] = blockDim.x;
-    result[4] = blockDim.z;*/
-   // tickTurnmeter(c1);
-   // return c1->speed;
-//    delete s;
 }
 
 
@@ -548,15 +578,15 @@ cudaError_t testWithCuda(Simulation* simulation, SimulationParams* params)
     */
 
     uint32_t variations = CalculateSimulationParamsVariations(params);
-    int block_size = 1;
-    int blocks_count = 1; // variations / block_size;
+    int block_size = 256;
+    int blocks_count =  variations / block_size;
     //int blocks_count = 1;
-    fprintf(stderr, "CalculateSimulationParamsVariations %u\nblock_size=%i\nblocks_count=%i\n", variations, block_size, blocks_count);
+    fprintf(stderr, "CalculateSimulationParamsVariations \nblock_size=%i\nblocks_count=%i\n", variations, block_size, blocks_count);
 
 
    
 
-
+    const clock_t begin_time = clock();
 
     // Launch a kernel on the GPU with one thread for each element.
     test <<<blocks_count, block_size >>>(gpuSimulation, gpuSimulationParams);
@@ -576,6 +606,15 @@ cudaError_t testWithCuda(Simulation* simulation, SimulationParams* params)
         goto Error;
     }
 
+
+    const clock_t end_time = clock();
+
+    float seconds = (end_time - begin_time) * 1.0 / CLOCKS_PER_SEC;
+    float ips = variations * 1.0 / seconds / 1000000;
+
+    printf("Finished. Total time: %.1fs, speed: %.1fkk per second\n", seconds, ips);
+
+
     int founded;
     cudaStatus = cudaMemcpyFromSymbol(&founded, dev_founded, sizeof(int));
     if (cudaStatus != cudaSuccess) {
@@ -593,23 +632,18 @@ cudaError_t testWithCuda(Simulation* simulation, SimulationParams* params)
     printf("gpuResult.count=%d\n", dsize);
 
 
-    char result[N];
-    cudaStatus = cudaMemcpyFromSymbol(&result, dev_data, N * sizeof(char));
+    uint64_t result[N];
+    cudaStatus = cudaMemcpyFromSymbol(&result, dev_data, N * sizeof(uint64_t));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "CUDA cudaMemcpyFromSymbol result failed: %s\n", cudaGetErrorString(cudaStatus));
         goto Error;
     }
 
-    for (int i = 0; i < 500; i++) {
-        if (result[i] == 'S') {
-            printf("S");
-        }
-        else if (result[i] == 'B') {
-            printf("\tBOSS\n");
-        }
-        else {
-            printf(" %c", result[i]);
-        }
+    Simulation s;
+    for (int i = 0; i < 10; i++) {
+        FillSpeedsFromIndex(&s, params, result[i]);
+        printf("FOUND:  C1=%d:%d C2=%d:%d C3=%d:%d C4=%d:%d C5=%d:%d\n", s.c1.speed, s.c1.skillDelay
+            , s.c2.speed, s.c2.skillDelay, s.c3.speed, s.c3.skillDelay, s.c4.speed, s.c4.skillDelay, s.c5.speed, s.c5.skillDelay);
     }
 
     
