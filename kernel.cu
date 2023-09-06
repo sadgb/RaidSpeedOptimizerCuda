@@ -4,8 +4,7 @@
 
 #include <stdio.h>
 #include <string>
-#include <thrust/host_vector.h>
-#include <thrust/device_vector.h>
+#include <inttypes.h>
 
 enum ChampionType {
     ApothecaryType,
@@ -31,11 +30,10 @@ struct Entity {
 };
 
 struct ChampionStruct : Entity {  // Structure declaration  
-    char name[20];
-    int skillCooldown = 0;
-    int skillCurrentCooldown = 0;
-    int skillDelay = 0;
-    int unkillableDuration = 0;
+    int_fast8_t skillCooldown = 0;
+    int_fast8_t skillCurrentCooldown = 0;
+    int_fast8_t skillDelay = 0;
+    int_fast8_t unkillableDuration = 0;
     ChampionType type;
 };
 
@@ -110,22 +108,22 @@ struct SimulationParams {
 SimulationParams* GetSimulationParams() {
     SimulationParams* params = new SimulationParams;
     params->c1StartSpeed = 200;
-    params->c1SpeedSteps = 150;
+    params->c1SpeedSteps = 96;
     params->c1SkillDelayMin = 0;
-    params->c1SkillDelaySteps = 6;
+    params->c1SkillDelaySteps = 2;
     //----------
     params->c2StartSpeed = 200;
-    params->c2SpeedSteps = 100;
+    params->c2SpeedSteps = 80;
     params->c2SkillDelayMin = 0;
-    params->c2SkillDelaySteps = 6;
+    params->c2SkillDelaySteps = 4;
     //----------
     params->c3StartSpeed = 200;
-    params->c3SpeedSteps = 100;
+    params->c3SpeedSteps = 96;
     params->c3SkillDelayMin = 0;
-    params->c3SkillDelaySteps = 6;
+    params->c3SkillDelaySteps = 5;
     //----------
-    params->c4StartSpeed = 270;
-    params->c4SpeedSteps = 10;
+    params->c4StartSpeed = 200;
+    params->c4SpeedSteps = 0;
     params->c4SkillDelayMin = 0;
     params->c4SkillDelaySteps = 0;
     //----------
@@ -193,12 +191,14 @@ __device__ int my_push_back(uint64_t mt) {
     }
 }
 
-uint32_t CalculateSimulationParamsVariations(SimulationParams* params) {
-    return (params->c1SpeedSteps + 1) * (params->c1SkillDelaySteps + 1) *
-        (params->c2SpeedSteps + 1) * (params->c2SkillDelaySteps + 1) *
+uint64_t CalculateSimulationParamsVariations(SimulationParams* params) {
+    uint64_t result = (params->c1SpeedSteps + 1) * (params->c1SkillDelaySteps + 1);
+    result *= (params->c2SpeedSteps + 1) * (params->c2SkillDelaySteps + 1) *
         (params->c3SpeedSteps + 1) * (params->c3SkillDelaySteps + 1) *
         (params->c4SpeedSteps + 1) * (params->c4SkillDelaySteps + 1) *
         (params->c5SpeedSteps + 1) * (params->c5SkillDelaySteps + 1);
+
+    return result;
 }
 
 cudaError_t testWithCuda(Simulation* simulation, SimulationParams* params);
@@ -456,12 +456,13 @@ __global__ void test(Simulation* simulation, SimulationParams* params) {
         }
     }
     /**/
-
+    
     if (s.cb.turnesMade >= 50) {
         // SUCCESS
         my_push_back(getGlobalIdx());
        atomicAdd(&dev_founded, 1);
     }
+    /**/
 }
 
 
@@ -577,11 +578,11 @@ cudaError_t testWithCuda(Simulation* simulation, SimulationParams* params)
 
     */
 
-    uint32_t variations = CalculateSimulationParamsVariations(params);
-    int block_size = 256;
-    int blocks_count =  variations / block_size;
+    uint64_t variations = CalculateSimulationParamsVariations(params);
+    int block_size = 128;
+    uint64_t blocks_count =  variations / block_size;
     //int blocks_count = 1;
-    fprintf(stderr, "CalculateSimulationParamsVariations \nblock_size=%i\nblocks_count=%i\n", variations, block_size, blocks_count);
+    fprintf(stderr, "CalculateSimulationParamsVariations %" PRIu64 "kk,\nblock_size=%i\nblocks_count=%ukk\nestimated_time=%.1fs\n", variations/1000000, block_size, blocks_count / 1000000, variations*1.0 / 300000000);
 
 
    
